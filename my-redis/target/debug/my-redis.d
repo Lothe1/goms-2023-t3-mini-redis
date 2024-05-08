@@ -1,0 +1,1 @@
+/Users/tath/Desktop/University/Guts\ of\ Modern\ System/goms-2023-t3-mini1-Lothe1/my-redis/target/debug/my-redis: /Users/tath/Desktop/University/Guts\ of\ Modern\ System/goms-2023-t3-mini1-Lothe1/my-redis/src/main.rs
