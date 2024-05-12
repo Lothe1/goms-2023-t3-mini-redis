@@ -1,88 +1,93 @@
-use mini_redis::{client, Result};
-use tokio::net::{TcpListener, TcpStream};
-use mini_redis::{Connection, Frame};
-use bytes::Bytes;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-type Db = Arc<Mutex<HashMap<String, Bytes>>>;
-type ShardedDb = Arc<Vec<Mutex<HashMap<String, Vec<u8>>>>>;
+//! mini-redis server.
+//!
+//! This file is the entry point for the server implemented in the library. It
+//! performs command line parsing and passes the arguments on to
+//! `mini_redis::server`.
+//!
+//! The `clap` crate is used for parsing arguments.
 
+use my_redis::{server, DEFAULT_PORT};
+use clap::Parser;
+use tokio::net::TcpListener;
+use tokio::signal;
 
-#[derive(Debug)]
-enum Command {
-    Get {
-        key: String,
-    },
-    Set {
-        key: String,
-        val: Bytes,
-    }
-}
-
-
-
-fn new_sharded_db(num_shards: usize) -> ShardedDb {
-    let mut db = Vec::with_capacity(num_shards);
-    for _ in 0..num_shards {
-        db.push(Mutex::new(HashMap::new()));
-    }
-    Arc::new(db)
-}
-
+#[cfg(feature = "otel")]
+// To be able to set the XrayPropagator
+use opentelemetry::global;
+#[cfg(feature = "otel")]
+// To configure certain options such as sampling rate
+use opentelemetry::sdk::trace as sdktrace;
+#[cfg(feature = "otel")]
+// For passing along the same XrayId across services
+use opentelemetry_aws::trace::XrayPropagator;
+#[cfg(feature = "otel")]
+// The `Ext` traits are to allow the Registry to accept the
+// OpenTelemetry-specific types (such as `OpenTelemetryLayer`)
+use tracing_subscriber::{
+    fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
+};
 
 #[tokio::main]
-async fn main() {
-    // Bind the listener to the address
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+pub async fn main() -> my_redis::Result<()> {
+    set_up_logging()?;
 
-    //initializing databases for each channel
-    // let mut databases: Vec<Db> = Vec::new() ;
-    // for _ in 0..=15{
-    //     databases.push(Arc::new(Mutex::new(HashMap::new())));
-    // }
+    let cli = Cli::parse();
+    let port = cli.port.unwrap_or(DEFAULT_PORT);
 
+    // Bind a TCP listener
+    let listener = TcpListener::bind(&format!("127.0.0.1:{}", port)).await?;
 
-    println!("Listening");
-    let db = Arc::new(Mutex::new(HashMap::new()));
+    server::run(listener, signal::ctrl_c()).await;
 
-    loop {
-        let (socket, _) = listener.accept().await.unwrap();
-        // Clone the handle to the hash map.
-        let db = db.clone();
-
-        println!("Accepted");
-        tokio::spawn(async move {
-            process(socket, db).await;
-        });
-    }
+    Ok(())
 }
 
-async fn process(socket: TcpStream, db: Db) {
-    use mini_redis::Command::{self, Get, Set};
+#[derive(Parser, Debug)]
+#[clap(name = "mini-redis-server", version, author, about = "A Redis server")]
+struct Cli {
+    #[clap(long)]
+    port: Option<u16>,
+}
 
-    // Connection, provided by `mini-redis`, handles parsing frames from
-    // the socket
-    let mut connection = Connection::new(socket);
+#[cfg(not(feature = "otel"))]
+fn set_up_logging() -> my_redis::Result<()> {
+    // See https://docs.rs/tracing for more info
+    tracing_subscriber::fmt::try_init()
+}
 
-    while let Some(frame) = connection.read_frame().await.unwrap() {
-        let response = match Command::from_frame(frame).unwrap() {
-            Set(cmd) => {
-                let mut db = db.lock().unwrap();
-                db.insert(cmd.key().to_string(), cmd.value().clone());
-                Frame::Simple("OK".to_string())
-            }
-            Get(cmd) => {
-                let db = db.lock().unwrap();
-                if let Some(value) = db.get(cmd.key()) {
-                    Frame::Bulk(value.clone())
-                } else {
-                    Frame::Null
-                }
-            }
-            cmd => panic!("unimplemented {:?}", cmd),
-        };
+#[cfg(feature = "otel")]
+fn set_up_logging() -> Result<(), TryInitError> {
+    // Set the global propagator to X-Ray propagator
+    // Note: If you need to pass the x-amzn-trace-id across services in the same trace,
+    // you will need this line. However, this requires additional code not pictured here.
+    // For a full example using hyper, see:
+    // https://github.com/open-telemetry/opentelemetry-rust/blob/v0.19.0/examples/aws-xray/src/server.rs#L14-L26
+    global::set_text_map_propagator(XrayPropagator::default());
 
-        // Write the response to the client
-        connection.write_frame(&response).await.unwrap();
-    }
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(opentelemetry_otlp::new_exporter().tonic())
+        .with_trace_config(
+            sdktrace::config()
+                .with_sampler(sdktrace::Sampler::AlwaysOn)
+                // Needed in order to convert the trace IDs into an Xray-compatible format
+                .with_id_generator(sdktrace::XrayIdGenerator::default()),
+        )
+        .install_simple()
+        .expect("Unable to initialize OtlpPipeline");
+
+    // Create a tracing layer with the configured tracer
+    let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    // Parse an `EnvFilter` configuration from the `RUST_LOG`
+    // environment variable.
+    let filter = EnvFilter::from_default_env();
+
+    // Use the tracing subscriber `Registry`, or any other subscriber
+    // that impls `LookupSpan`
+    tracing_subscriber::registry()
+        .with(opentelemetry)
+        .with(filter)
+        .with(fmt::Layer::default())
+        .try_init()
 }
