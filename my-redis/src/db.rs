@@ -51,10 +51,7 @@ struct Shared {
     /// should be used.
     state: Mutex<State>,
 
-    /// Notifies the background task handling entry expiration. The background
-    /// task waits on this to be notified, then checks for expired values or the
-    /// shutdown signal.
-    background_task: Notify,
+
 }
 
 #[derive(Debug)]
@@ -77,7 +74,7 @@ struct State {
     /// created for the same instant. Because of this, the `Instant` is
     /// insufficient for the key. A unique key (`String`) is used to
     /// break these ties.
-    expirations: BTreeSet<(Instant, String)>,
+
 
     /// True when the Db instance is shutting down. This happens when all `Db`
     /// values drop. Setting this to `true` signals to the background task to
@@ -91,9 +88,6 @@ struct Entry {
     /// Stored data
     data: Bytes,
 
-    /// Instant at which the entry expires and should be removed from the
-    /// database.
-    expires_at: Option<Instant>,
 }
 
 impl DbDropGuard {
@@ -113,7 +107,7 @@ impl DbDropGuard {
 impl Drop for DbDropGuard {
     fn drop(&mut self) {
         // Signal the 'Db' instance to shut down the task that purges expired keys
-        self.db.shutdown_purge_task();
+        // self.db.shutdown_purge_task();
     }
 }
 
@@ -125,14 +119,9 @@ impl Db {
             state: Mutex::new(State {
                 entries: HashMap::new(),
                 pub_sub: HashMap::new(),
-                expirations: BTreeSet::new(),
                 shutdown: false,
-            }),
-            background_task: Notify::new(),
+            })
         });
-
-        // Start the background task.
-        tokio::spawn(purge_expired_tasks(shared.clone()));
 
         Db { shared }
     }
@@ -155,7 +144,7 @@ impl Db {
     /// Duration.
     ///
     /// If a value is already associated with the key, it is removed.
-    pub(crate) fn set(&self, key: String, value: Bytes, expire: Option<Duration>) {
+    pub(crate) fn set(&self, key: String, value: Bytes) {
         let mut state = self.shared.state.lock().unwrap();
 
         // If this `set` becomes the key that expires **next**, the background
@@ -165,57 +154,20 @@ impl Db {
         // `set` routine.
         let mut notify = false;
 
-        let expires_at = expire.map(|duration| {
-            // `Instant` at which the key expires.
-            let when = Instant::now() + duration;
-
-            // Only notify the worker task if the newly inserted expiration is the
-            // **next** key to evict. In this case, the worker needs to be woken up
-            // to update its state.
-            notify = state
-                .next_expiration()
-                .map(|expiration| expiration > when)
-                .unwrap_or(true);
-
-            when
-        });
-
         // Insert the entry into the `HashMap`.
         let prev = state.entries.insert(
             key.clone(),
             Entry {
-                data: value,
-                expires_at,
+                data: value
             },
         );
-
-        // If there was a value previously associated with the key **and** it
-        // had an expiration time. The associated entry in the `expirations` map
-        // must also be removed. This avoids leaking data.
-        if let Some(prev) = prev {
-            if let Some(when) = prev.expires_at {
-                // clear expiration
-                state.expirations.remove(&(when, key.clone()));
-            }
-        }
-
-        // Track the expiration. If we insert before remove that will cause bug
-        // when current `(when, key)` equals prev `(when, key)`. Remove then insert
-        // can avoid this.
-        if let Some(when) = expires_at {
-            state.expirations.insert((when, key));
-        }
 
         // Release the mutex before notifying the background task. This helps
         // reduce contention by avoiding the background task waking up only to
         // be unable to acquire the mutex due to this function still holding it.
         drop(state);
 
-        if notify {
-            // Finally, only notify the background task if it needs to update
-            // its state to reflect a new expiration.
-            self.shared.background_task.notify_one();
-        }
+
     }
 
     /// Returns a `Receiver` for the requested channel.
@@ -268,58 +220,10 @@ impl Db {
             .unwrap_or(0)
     }
 
-    /// Signals the purge background task to shut down. This is called by the
-    /// `DbShutdown`s `Drop` implementation.
-    fn shutdown_purge_task(&self) {
-        // The background task must be signaled to shut down. This is done by
-        // setting `State::shutdown` to `true` and signalling the task.
-        let mut state = self.shared.state.lock().unwrap();
-        state.shutdown = true;
 
-        // Drop the lock before signalling the background task. This helps
-        // reduce lock contention by ensuring the background task doesn't
-        // wake up only to be unable to acquire the mutex.
-        drop(state);
-        self.shared.background_task.notify_one();
-    }
 }
 
 impl Shared {
-    /// Purge all expired keys and return the `Instant` at which the **next**
-    /// key will expire. The background task will sleep until this instant.
-    fn purge_expired_keys(&self) -> Option<Instant> {
-        let mut state = self.state.lock().unwrap();
-
-        if state.shutdown {
-            // The database is shutting down. All handles to the shared state
-            // have dropped. The background task should exit.
-            return None;
-        }
-
-        // This is needed to make the borrow checker happy. In short, `lock()`
-        // returns a `MutexGuard` and not a `&mut State`. The borrow checker is
-        // not able to see "through" the mutex guard and determine that it is
-        // safe to access both `state.expirations` and `state.entries` mutably,
-        // so we get a "real" mutable reference to `State` outside of the loop.
-        let state = &mut *state;
-
-        // Find all keys scheduled to expire **before** now.
-        let now = Instant::now();
-
-        while let Some(&(when, ref key)) = state.expirations.iter().next() {
-            if when > now {
-                // Done purging, `when` is the instant at which the next key
-                // expires. The worker task will wait until this instant.
-                return Some(when);
-            }
-
-            // The key expired, remove it
-            state.entries.remove(key);
-            state.expirations.remove(&(when, key.clone()));
-        }
-
-        None
-    }
 
     /// Returns `true` if the database is shutting down
     ///
@@ -331,39 +235,5 @@ impl Shared {
 }
 
 impl State {
-    fn next_expiration(&self) -> Option<Instant> {
-        self.expirations
-            .iter()
-            .next()
-            .map(|expiration| expiration.0)
-    }
-}
 
-/// Routine executed by the background task.
-///
-/// Wait to be notified. On notification, purge any expired keys from the shared
-/// state handle. If `shutdown` is set, terminate the task.
-async fn purge_expired_tasks(shared: Arc<Shared>) {
-    // If the shutdown flag is set, then the task should exit.
-    while !shared.is_shutdown() {
-        // Purge all keys that are expired. The function returns the instant at
-        // which the **next** key will expire. The worker should wait until the
-        // instant has passed then purge again.
-        if let Some(when) = shared.purge_expired_keys() {
-            // Wait until the next key expires **or** until the background task
-            // is notified. If the task is notified, then it must reload its
-            // state as new keys have been set to expire early. This is done by
-            // looping.
-            tokio::select! {
-                _ = time::sleep_until(when) => {}
-                _ = shared.background_task.notified() => {}
-            }
-        } else {
-            // There are no keys expiring in the future. Wait until the task is
-            // notified.
-            shared.background_task.notified().await;
-        }
-    }
-
-    debug!("Purge background task shut down")
 }

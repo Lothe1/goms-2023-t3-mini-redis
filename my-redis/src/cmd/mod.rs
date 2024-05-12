@@ -14,6 +14,8 @@ pub use set::Set;
 // pub use ping::Ping;
 
 mod unknown;
+mod select;
+
 pub use unknown::Unknown;
 
 use crate::{Connection, Db, Frame, Parse, ParseError};

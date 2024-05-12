@@ -25,8 +25,6 @@ pub struct Set {
     /// the value to be stored
     value: Bytes,
 
-    /// When to expire the key
-    expire: Option<Duration>,
 }
 
 impl Set {
@@ -38,7 +36,7 @@ impl Set {
         Set {
             key: key.to_string(),
             value,
-            expire,
+
         }
     }
 
@@ -52,10 +50,6 @@ impl Set {
         &self.value
     }
 
-    /// Get the expire
-    pub fn expire(&self) -> Option<Duration> {
-        self.expire
-    }
 
     /// Parse a `Set` instance from a received frame.
     ///
@@ -86,28 +80,14 @@ impl Set {
         // Read the value to set. This is a required field.
         let value = parse.next_bytes()?;
 
-        // The expiration is optional. If nothing else follows, then it is
-        // `None`.
-        let mut expire = None;
+
 
         // Attempt to parse another string.
         match parse.next_string() {
-            Ok(s) if s.to_uppercase() == "EX" => {
-                // An expiration is specified in seconds. The next value is an
-                // integer.
-                let secs = parse.next_int()?;
-                expire = Some(Duration::from_secs(secs));
-            }
-            Ok(s) if s.to_uppercase() == "PX" => {
-                // An expiration is specified in milliseconds. The next value is
-                // an integer.
-                let ms = parse.next_int()?;
-                expire = Some(Duration::from_millis(ms));
-            }
             // Currently, mini-redis does not support any of the other SET
             // options. An error here results in the connection being
             // terminated. Other connections will continue to operate normally.
-            Ok(_) => return Err("currently `SET` only supports the expiration option".into()),
+            Ok(_) => return Err("currently `SET` only supports the bare-bone version".into()),
             // The `EndOfStream` error indicates there is no further data to
             // parse. In this case, it is a normal run time situation and
             // indicates there are no specified `SET` options.
@@ -117,7 +97,7 @@ impl Set {
             Err(err) => return Err(err.into()),
         }
 
-        Ok(Set { key, value, expire })
+        Ok(Set { key, value })
     }
 
     /// Apply the `Set` command to the specified `Db` instance.
@@ -127,7 +107,7 @@ impl Set {
     #[instrument(skip(self, db, dst))]
     pub(crate) async fn apply(self, db: &Db, dst: &mut Connection) -> crate::Result<()> {
         // Set the value in the shared database state.
-        db.set(self.key, self.value, self.expire);
+        db.set(self.key, self.value);
 
         // Create a success response and write it to `dst`.
         let response = Frame::Simple("OK".to_string());
@@ -146,16 +126,7 @@ impl Set {
         frame.push_bulk(Bytes::from("set".as_bytes()));
         frame.push_bulk(Bytes::from(self.key.into_bytes()));
         frame.push_bulk(self.value);
-        if let Some(ms) = self.expire {
-            // Expirations in Redis procotol can be specified in two ways
-            // 1. SET key value EX seconds
-            // 2. SET key value PX milliseconds
-            // We the second option because it allows greater precision and
-            // src/bin/cli.rs parses the expiration argument as milliseconds
-            // in duration_from_ms_str()
-            frame.push_bulk(Bytes::from("px".as_bytes()));
-            frame.push_int(ms.as_millis() as u64);
-        }
+
         frame
     }
 }
