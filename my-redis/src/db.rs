@@ -5,15 +5,47 @@ use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use tracing::debug;
+const NUM_DBS: usize = 16;
+pub struct AllDbs {
+    db0: Db,
+    db1: Db,
+    db2: Db,
+    db3: Db,
+    db4: Db,
+    db5: Db,
+    db6: Db,
+    db7: Db,
+    db8: Db,
+    db9: Db,
+    db10: Db,
+    db11: Db,
+    db12: Db,
+    db13: Db,
+    db14: Db,
+    db15: Db,
+}
 
-/// A wrapper around a `Db` instance. This exists to allow orderly cleanup
-/// of the `Db` by signalling the background purge task to shut down when
-/// this struct is dropped.
-#[derive(Debug)]
-pub(crate) struct DbDropGuard {
-    /// The `Db` instance that will be shut down when this `DbHolder` struct
-    /// is dropped.
-    db: Db,
+impl AllDbs {
+    pub fn new() -> AllDbs {
+        AllDbs {
+            db0: Db::new(),
+            db1: Db::new(),
+            db2: Db::new(),
+            db3: Db::new(),
+            db4: Db::new(),
+            db5: Db::new(),
+            db6: Db::new(),
+            db7: Db::new(),
+            db8: Db::new(),
+            db9: Db::new(),
+            db10: Db::new(),
+            db11: Db::new(),
+            db12: Db::new(),
+            db13: Db::new(),
+            db14: Db::new(),
+            db15: Db::new(),
+        }
+    }
 }
 
 /// Server state shared across all connections.
@@ -50,8 +82,6 @@ struct Shared {
     /// is considered a "blocking" operation and `tokio::task::spawn_blocking`
     /// should be used.
     state: Mutex<State>,
-
-
 }
 
 #[derive(Debug)]

@@ -46,7 +46,7 @@ struct Listener {
     /// handle. When a graceful shutdown is initiated, a `()` value is sent via
     /// the broadcast::Sender. Each active connection receives it, reaches a
     /// safe terminal state, and completes the task.
-    notify_shutdown: broadcast::Sender<()>,
+    notify_shutdown: mpsc::Sender<()>,
 
     /// Used as part of the graceful shutdown process to wait for client
     /// connections to complete processing.
@@ -95,7 +95,12 @@ struct Handler {
 
     /// Not used directly. Instead, when `Handler` is dropped...?
     _shutdown_complete: mpsc::Sender<()>,
+    first_command_received: bool,
+    databasesVector: Vec<DbDropGuard>,
+
 }
+
+
 
 /// Maximum number of concurrent connections the redis server will accept.
 ///
@@ -110,6 +115,22 @@ struct Handler {
 /// this is not a serious project... but I thought that about mini-http as
 /// well).
 const MAX_CONNECTIONS: usize = 250;
+
+
+pub fn initialize_databases() -> Vec<DbDropGuard>{
+    let mut databases = vec![];
+    for _ in 0..15{
+        databases.push(DbDropGuard::new());
+    }
+    return databases;
+}
+
+#[derive(Debug)]
+pub(crate) struct Request {
+    pub cmd: Command,
+    pub sender: oneshot::Sender<Frame>,
+}
+
 
 /// Run the mini-redis server.
 ///
@@ -126,8 +147,17 @@ pub async fn run(listener: TcpListener, shutdown: impl Future) {
     // purpose. The call below ignores the receiver of the broadcast pair, and when
     // a receiver is needed, the subscribe() method on the sender is used to create
     // one.
-    let (notify_shutdown, _) = broadcast::channel(1);
-    let (shutdown_complete_tx, mut shutdown_complete_rx) = mpsc::channel(1);
+    let (notify_shutdown, _) = oneshot::channel(1);
+    let (shutdown_complete_tx, mut shutdown_complete_rx) = oneshot::channel(1);
+
+    //create mpsc channels for the database
+
+    let senders = Vec[];
+
+    for _ in 0..15{
+
+    }
+
 
     // Initialize the listener state
     let mut server = Listener {
@@ -241,7 +271,6 @@ impl Listener {
             let mut handler = Handler {
                 // Get a handle to the shared database.
                 db: self.db_holder.db(),
-
                 // Initialize the connection state. This allocates read/write
                 // buffers to perform redis protocol frame parsing.
                 connection: Connection::new(socket),
@@ -252,6 +281,9 @@ impl Listener {
                 // Notifies the receiver half once all clones are
                 // dropped.
                 _shutdown_complete: self.shutdown_complete_tx.clone(),
+
+                first_command_received: false,
+
             };
 
             // Spawn a new task to process the connections. Tokio tasks are like
@@ -363,6 +395,26 @@ impl Handler {
             // command to write response frames directly to the connection. In
             // the case of pub/sub, multiple frames may be send back to the
             // peer.
+
+            if !self.first_command_received {
+                match cmd {
+                    Command::Select(db_index) => {
+                        if db_index.db_index() >= 0 && db_index.db_index() < 15 {
+                            // Set the selected database
+                            self.db = self.db_holder[db_index as usize].db().clone();
+                            self.first_command_received = true;
+                        } else {
+                            // Invalid database index
+                            return Err("Invalid database index".into());
+                        }
+                    }
+                    _ => {
+                        // First command must be SELECT
+                        return Err("First command must be SELECT".into());
+                    }
+                }
+            }
+
             cmd.apply(&self.db, &mut self.connection)
                 .await?;
 

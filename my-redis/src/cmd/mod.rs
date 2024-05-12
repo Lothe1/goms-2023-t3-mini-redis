@@ -19,6 +19,7 @@ mod select;
 pub use unknown::Unknown;
 
 use crate::{Connection, Db, Frame, Parse, ParseError};
+use crate::cmd::select::Select;
 
 /// Enumeration of supported Redis commands.
 ///
@@ -31,8 +32,11 @@ pub enum Command {
     // Subscribe(Subscribe),
     // Unsubscribe(Unsubscribe),
     // Ping(Ping),
+    Select(Select),
     Unknown(Unknown),
 }
+
+
 
 impl Command {
     /// Parse a command from a received frame.
@@ -62,6 +66,7 @@ impl Command {
             "get" => Command::Get(Get::parse_frames(&mut parse)?),
             // "publish" => Command::Publish(Publish::parse_frames(&mut parse)?),
             "set" => Command::Set(Set::parse_frames(&mut parse)?),
+            "select" => Command::Select(Select::parse_frames(&mut parse)?),
             // "subscribe" => Command::Subscribe(Subscribe::parse_frames(&mut parse)?),
             // "unsubscribe" => Command::Unsubscribe(Unsubscribe::parse_frames(&mut parse)?),
             // "ping" => Command::Ping(Ping::parse_frames(&mut parse)?),
@@ -103,6 +108,7 @@ impl Command {
             Set(cmd) => cmd.apply(db, dst).await,
             // Subscribe(cmd) => cmd.apply(db, dst, shutdown).await,
             // Ping(cmd) => cmd.apply(dst).await,
+            Select(cmd) => cmd.apply(dst).await,
             Unknown(cmd) => cmd.apply(dst).await,
             // `Unsubscribe` cannot be applied. It may only be received from the
             // context of a `Subscribe` command.
@@ -119,6 +125,7 @@ impl Command {
             // Command::Subscribe(_) => "subscribe",
             // Command::Unsubscribe(_) => "unsubscribe",
             // Command::Ping(_) => "ping",
+            Command::Select(_) => "select",
             Command::Unknown(cmd) => cmd.get_name(),
         }
     }
