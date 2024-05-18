@@ -94,27 +94,27 @@ impl Command {
     ///
     /// The response is written to `dst`. This is called by the server in order
     /// to execute a received command.
-    pub(crate) async fn apply(
-        self,
-        db: &Db,
-        dst: &mut Connection,
-        // shutdown: &mut Shutdown,
-    ) -> crate::Result<()> {
-        use Command::*;
-
-        match self {
-            Get(cmd) => cmd.apply(db, dst).await,
-            // Publish(cmd) => cmd.apply(db, dst).await,
-            Set(cmd) => cmd.apply(db, dst).await,
-            // Subscribe(cmd) => cmd.apply(db, dst, shutdown).await,
-            // Ping(cmd) => cmd.apply(dst).await,
-            Select(cmd) => cmd.apply(dst).await,
-            Unknown(cmd) => cmd.apply(dst).await,
-            // `Unsubscribe` cannot be applied. It may only be received from the
-            // context of a `Subscribe` command.
-            // Unsubscribe(_) => Err("`Unsubscribe` is unsupported in this context".into()),
-        }
-    }
+    // pub(crate) async fn apply(
+    //     self,
+    //     db: &Db,
+    //     dst: &mut Connection,
+    //     // shutdown: &mut Shutdown,
+    // ) -> crate::Result<()> {
+    //     use Command::*;
+    //
+    //     match self {
+    //         Get(cmd) => cmd.apply(db, dst).await,
+    //         // Publish(cmd) => cmd.apply(db, dst).await,
+    //         Set(cmd) => cmd.apply(db, dst).await,
+    //         // Subscribe(cmd) => cmd.apply(db, dst, shutdown).await,
+    //         // Ping(cmd) => cmd.apply(dst).await,
+    //         Select(cmd) => cmd.apply(db, dst).await,
+    //         Unknown(cmd) => cmd.apply(dst).await,
+    //         // `Unsubscribe` cannot be applied. It may only be received from the
+    //         // context of a `Subscribe` command.
+    //         // Unsubscribe(_) => Err("`Unsubscribe` is unsupported in this context".into()),
+    //     }
+    // }
 
     /// Returns the command name
     pub(crate) fn get_name(&self) -> &str {

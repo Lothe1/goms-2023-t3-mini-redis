@@ -6,6 +6,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use tracing::debug;
 const NUM_DBS: usize = 16;
+pub(crate) type Db = Arc<Mutex<HashMap<String, Bytes>>>;
+#[derive(Debug)]
 pub struct AllDbs {
     db0: Db,
     db1: Db,
@@ -28,242 +30,65 @@ pub struct AllDbs {
 impl AllDbs {
     pub fn new() -> AllDbs {
         AllDbs {
-            db0: Db::new(),
-            db1: Db::new(),
-            db2: Db::new(),
-            db3: Db::new(),
-            db4: Db::new(),
-            db5: Db::new(),
-            db6: Db::new(),
-            db7: Db::new(),
-            db8: Db::new(),
-            db9: Db::new(),
-            db10: Db::new(),
-            db11: Db::new(),
-            db12: Db::new(),
-            db13: Db::new(),
-            db14: Db::new(),
-            db15: Db::new(),
+            db0: Db::new(Mutex::new(Default::default())),
+            db1: Db::new(Mutex::new(Default::default())),
+            db2: Db::new(Mutex::new(Default::default())),
+            db3: Db::new(Mutex::new(Default::default())),
+            db4: Db::new(Mutex::new(Default::default())),
+            db5: Db::new(Mutex::new(Default::default())),
+            db6: Db::new(Mutex::new(Default::default())),
+            db7: Db::new(Mutex::new(Default::default())),
+            db8: Db::new(Mutex::new(Default::default())),
+            db9: Db::new(Mutex::new(Default::default())),
+            db10: Db::new(Mutex::new(Default::default())),
+            db11: Db::new(Mutex::new(Default::default())),
+            db12: Db::new(Mutex::new(Default::default())),
+            db13: Db::new(Mutex::new(Default::default())),
+            db14: Db::new(Mutex::new(Default::default())),
+            db15: Db::new(Mutex::new(Default::default())),
         }
     }
-}
 
-/// Server state shared across all connections.
-///
-/// `Db` contains a `HashMap` storing the key/value data and all
-/// `broadcast::Sender` values for active pub/sub channels.
-///
-/// A `Db` instance is a handle to shared state. Cloning `Db` is shallow and
-/// only incurs an atomic ref count increment.
-///
-/// When a `Db` value is created, a background task is spawned. This task is
-/// used to expire values after the requested duration has elapsed. The task
-/// runs until all instances of `Db` are dropped, at which point the task
-/// terminates.
-#[derive(Debug, Clone)]
-pub(crate) struct Db {
-    /// Handle to shared state. The background task will also have an
-    /// `Arc<Shared>`.
-    shared: Arc<Shared>,
-}
-
-#[derive(Debug)]
-struct Shared {
-    /// The shared state is guarded by a mutex. This is a `std::sync::Mutex` and
-    /// not a Tokio mutex. This is because there are no asynchronous operations
-    /// being performed while holding the mutex. Additionally, the critical
-    /// sections are very small.
-    ///
-    /// A Tokio mutex is mostly intended to be used when locks need to be held
-    /// across `.await` yield points. All other cases are **usually** best
-    /// served by a std mutex. If the critical section does not include any
-    /// async operations but is long (CPU intensive or performing blocking
-    /// operations), then the entire operation, including waiting for the mutex,
-    /// is considered a "blocking" operation and `tokio::task::spawn_blocking`
-    /// should be used.
-    state: Mutex<State>,
-}
-
-#[derive(Debug)]
-struct State {
-    /// The key-value data. We are not trying to do anything fancy so a
-    /// `std::collections::HashMap` works fine.
-    entries: HashMap<String, Entry>,
-
-    /// The pub/sub key-space. Redis uses a **separate** key space for key-value
-    /// and pub/sub. `mini-redis` handles this by using a separate `HashMap`.
-    pub_sub: HashMap<String, broadcast::Sender<Bytes>>,
-
-    /// Tracks key TTLs.
-    ///
-    /// A `BTreeSet` is used to maintain expirations sorted by when they expire.
-    /// This allows the background task to iterate this map to find the value
-    /// expiring next.
-    ///
-    /// While highly unlikely, it is possible for more than one expiration to be
-    /// created for the same instant. Because of this, the `Instant` is
-    /// insufficient for the key. A unique key (`String`) is used to
-    /// break these ties.
-
-
-    /// True when the Db instance is shutting down. This happens when all `Db`
-    /// values drop. Setting this to `true` signals to the background task to
-    /// exit.
-    shutdown: bool,
-}
-
-/// Entry in the key-value store
-#[derive(Debug)]
-struct Entry {
-    /// Stored data
-    data: Bytes,
-
-}
-
-impl DbDropGuard {
-    /// Create a new `DbHolder`, wrapping a `Db` instance. When this is dropped
-    /// the `Db`'s purge task will be shut down.
-    pub(crate) fn new() -> DbDropGuard {
-        DbDropGuard { db: Db::new() }
+    pub fn get_instance(&self, index: usize) -> Option<Db> {
+        match index {
+            0 => Some(Arc::clone(&self.db0)),
+            1 => Some(Arc::clone(&self.db1)),
+            2 => Some(Arc::clone(&self.db2)),
+            3 => Some(Arc::clone(&self.db3)),
+            4 => Some(Arc::clone(&self.db4)),
+            5 => Some(Arc::clone(&self.db5)),
+            6 => Some(Arc::clone(&self.db6)),
+            7 => Some(Arc::clone(&self.db7)),
+            8 => Some(Arc::clone(&self.db8)),
+            9 => Some(Arc::clone(&self.db9)),
+            10 => Some(Arc::clone(&self.db10)),
+            11 => Some(Arc::clone(&self.db11)),
+            12 => Some(Arc::clone(&self.db12)),
+            13 => Some(Arc::clone(&self.db13)),
+            14 => Some(Arc::clone(&self.db14)),
+            15 => Some(Arc::clone(&self.db15)),
+            _ => None,
+        }
     }
 
-    /// Get the shared database. Internally, this is an
-    /// `Arc`, so a clone only increments the ref count.
-    pub(crate) fn db(&self) -> Db {
-        self.db.clone()
-    }
-}
-
-impl Drop for DbDropGuard {
-    fn drop(&mut self) {
-        // Signal the 'Db' instance to shut down the task that purges expired keys
-        // self.db.shutdown_purge_task();
-    }
-}
-
-impl Db {
-    /// Create a new, empty, `Db` instance. Allocates shared state and spawns a
-    /// background task to manage key expiration.
-    pub(crate) fn new() -> Db {
-        let shared = Arc::new(Shared {
-            state: Mutex::new(State {
-                entries: HashMap::new(),
-                pub_sub: HashMap::new(),
-                shutdown: false,
-            })
-        });
-
-        Db { shared }
-    }
-
-    /// Get the value associated with a key.
-    ///
-    /// Returns `None` if there is no value associated with the key. This may be
-    /// due to never having assigned a value to the key or a previously assigned
-    /// value expired.
-    pub(crate) fn get(&self, key: &str) -> Option<Bytes> {
-        // Acquire the lock, get the entry and clone the value.
-        //
-        // Because data is stored using `Bytes`, a clone here is a shallow
-        // clone. Data is not copied.
-        let state = self.shared.state.lock().unwrap();
-        state.entries.get(key).map(|entry| entry.data.clone())
-    }
-
-    /// Set the value associated with a key along with an optional expiration
-    /// Duration.
-    ///
-    /// If a value is already associated with the key, it is removed.
-    pub(crate) fn set(&self, key: String, value: Bytes) {
-        let mut state = self.shared.state.lock().unwrap();
-
-        // If this `set` becomes the key that expires **next**, the background
-        // task needs to be notified so it can update its state.
-        //
-        // Whether or not the task needs to be notified is computed during the
-        // `set` routine.
-        let mut notify = false;
-
-        // Insert the entry into the `HashMap`.
-        let prev = state.entries.insert(
-            key.clone(),
-            Entry {
-                data: value
-            },
-        );
-
-        // Release the mutex before notifying the background task. This helps
-        // reduce contention by avoiding the background task waking up only to
-        // be unable to acquire the mutex due to this function still holding it.
-        drop(state);
-
-
-    }
-
-    /// Returns a `Receiver` for the requested channel.
-    ///
-    /// The returned `Receiver` is used to receive values broadcast by `PUBLISH`
-    /// commands.
-    pub(crate) fn subscribe(&self, key: String) -> broadcast::Receiver<Bytes> {
-        use std::collections::hash_map::Entry;
-
-        // Acquire the mutex
-        let mut state = self.shared.state.lock().unwrap();
-
-        // If there is no entry for the requested channel, then create a new
-        // broadcast channel and associate it with the key. If one already
-        // exists, return an associated receiver.
-        match state.pub_sub.entry(key) {
-            Entry::Occupied(e) => e.get().subscribe(),
-            Entry::Vacant(e) => {
-                // No broadcast channel exists yet, so create one.
-                //
-                // The channel is created with a capacity of `1024` messages. A
-                // message is stored in the channel until **all** subscribers
-                // have seen it. This means that a slow subscriber could result
-                // in messages being held indefinitely.
-                //
-                // When the channel's capacity fills up, publishing will result
-                // in old messages being dropped. This prevents slow consumers
-                // from blocking the entire system.
-                let (tx, rx) = broadcast::channel(1024);
-                e.insert(tx);
-                rx
+    pub fn get(&self, index: usize, key: &str) -> Option<Bytes> {
+        match self.get_instance(index) {
+            Some(db) => {
+                let db = db.lock().unwrap();
+                db.get(key).cloned()
             }
+            None => None,
         }
     }
 
-    /// Publish a message to the channel. Returns the number of subscribers
-    /// listening on the channel.
-    pub(crate) fn publish(&self, key: &str, value: Bytes) -> usize {
-        let state = self.shared.state.lock().unwrap();
-
-        state
-            .pub_sub
-            .get(key)
-            // On a successful message send on the broadcast channel, the number
-            // of subscribers is returned. An error indicates there are no
-            // receivers, in which case, `0` should be returned.
-            .map(|tx| tx.send(value).unwrap_or(0))
-            // If there is no entry for the channel key, then there are no
-            // subscribers. In this case, return `0`.
-            .unwrap_or(0)
+    pub fn set(&self, index: usize, key: String, value: Bytes) {
+        if let Some(db) = self.get_instance(index) {
+            let mut db = db.lock().unwrap();
+            db.insert(key, value);
+        }
     }
 
-
 }
 
-impl Shared {
 
-    /// Returns `true` if the database is shutting down
-    ///
-    /// The `shutdown` flag is set when all `Db` values have dropped, indicating
-    /// that the shared state can no longer be accessed.
-    fn is_shutdown(&self) -> bool {
-        self.state.lock().unwrap().shutdown
-    }
-}
 
-impl State {
-
-}

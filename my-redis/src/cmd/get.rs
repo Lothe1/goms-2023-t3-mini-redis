@@ -63,13 +63,15 @@ impl Get {
     #[instrument(skip(self, db, dst))]
     pub(crate) async fn apply(self, db: &Db, dst: &mut Connection) -> crate::Result<()> {
         // Get the value from the shared database state
-        let response = if let Some(value) = db.get(&self.key) {
-            // If a value is present, it is written to the client in "bulk"
-            // format.
-            Frame::Bulk(value)
-        } else {
-            // If there is no value, `Null` is written.
-            Frame::Null
+
+        let response = {
+            let db = db.lock().unwrap();
+            let value = db.get(&self.key);
+            if let Some(value) = value {
+                Frame::Bulk(value.clone().into())
+            } else {
+                Frame::Null
+            }
         };
 
         debug!(?response);

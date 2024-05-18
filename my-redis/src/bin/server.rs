@@ -6,10 +6,17 @@
 //!
 //! The `clap` crate is used for parsing arguments.
 
-use my_redis::{server, DEFAULT_PORT};
+
+use std::sync::Arc;
+use my_redis::{server, DEFAULT_PORT, Connection, Frame};
 use clap::Parser;
-use tokio::net::TcpListener;
-use tokio::signal;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;use my_redis::db::AllDbs;
+use my_redis::request::Request;
+use tokio::sync::mpsc::{Receiver, Sender};
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Result<T> = std::result::Result<T, Error>;
+
 
 #[cfg(feature = "otel")]
 // To be able to set the XrayPropagator
@@ -26,68 +33,90 @@ use opentelemetry_aws::trace::XrayPropagator;
 use tracing_subscriber::{
     fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
 };
+use my_redis::Command::{Get, Select, Set};
 
 #[tokio::main]
 pub async fn main() -> my_redis::Result<()> {
-    set_up_logging()?;
 
-    let cli = Cli::parse();
-    let port = cli.port.unwrap_or(DEFAULT_PORT);
-
+    let port = DEFAULT_PORT;
     // Bind a TCP listener
     let listener = TcpListener::bind(&format!("127.0.0.1:{}", port)).await?;
-
-    server::run(listener, signal::ctrl_c()).await;
-
+    let databases = Arc::new(AllDbs::new());
+    let mut senders: Vec<Sender<Request>> = vec![];
+    for database_index in 0..12 {
+        let (tx, rx) = mpsc::channel(32);
+        let all_dbs_clone = Arc::clone(&databases);
+        tokio::spawn(async move {
+            run(rx, database_index as usize, all_dbs_clone).await;
+        });
+        senders.push(tx);
+    }
+    let sender_arc: Arc<Vec<Sender<Request>>> = Arc::new(senders);
+    loop {
+        let (socket, _) = listener.accept().await?;
+        println!("Accepted");
+        let all_dbs_clone = databases.clone();
+        let sender_arc_clone = sender_arc.clone();
+        tokio::spawn(async move{
+            if let Err(e) = process(socket, all_dbs_clone, sender_arc_clone).await {
+                eprintln!("An error occurred: {}", e);
+            }
+        });
+    }
+}
+struct Client {
+    connection: Connection,
+    all_dbs: Arc<AllDbs>,
+    index: usize,
+}
+async fn process(socket: TcpStream, all_dbs: Arc<AllDbs>, channels: Arc<Vec<Sender<Request>>>) -> Result<()>{
+    let mut client = Client {
+        connection: Connection::new(socket),
+        all_dbs,
+        index: 0,
+    };
+    while let Some(frame) = client.connection.read_frame().await? {
+        dbg!(&frame);
+        let cmd = my_redis::Command::from_frame(frame)?;
+        let (request, receiver) = Request::new(cmd);
+        match request.cmd {
+            Select(cmd) => {
+                client.index = *cmd.db_index();
+                client.connection.write_frame(&Frame::Simple("OK".to_string())).await?;
+            }
+            _ => {
+                channels.get(client.index).expect("REASON").send(request).await?;
+                let frame = receiver.await?;
+                client.connection.write_frame(&frame).await?;
+            }
+        }
+    }
     Ok(())
 }
 
-#[derive(Parser, Debug)]
-#[clap(name = "mini-redis-server", version, author, about = "A Redis server")]
-struct Cli {
-    #[clap(long)]
-    port: Option<u16>,
+async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>) {
+    while let Some(request) = receiver.recv().await {
+        dbg!(&request);
+        // run sleep command
+        let response = match request.cmd {
+            Set(cmd) => {
+                all_dbs.get_instance(index).unwrap().lock().unwrap().insert(cmd.key().to_string(), cmd.value().clone());
+                Frame::Simple("OK".to_string())
+            }
+            Get(cmd) => {
+                if let Some(value) = all_dbs.get_instance(index).unwrap().lock().unwrap().get(cmd.key()) {
+                    dbg!(value.clone());
+                    Frame::Bulk(value.clone())
+                } else {
+                    Frame::Null
+                }
+            }
+            cmd => panic!("unimplemented {:?}", cmd),
+        };
+        request.sender.send(response).unwrap();
+    }
 }
 
-#[cfg(not(feature = "otel"))]
-fn set_up_logging() -> my_redis::Result<()> {
-    // See https://docs.rs/tracing for more info
-    tracing_subscriber::fmt::try_init()
-}
 
-#[cfg(feature = "otel")]
-fn set_up_logging() -> Result<(), TryInitError> {
-    // Set the global propagator to X-Ray propagator
-    // Note: If you need to pass the x-amzn-trace-id across services in the same trace,
-    // you will need this line. However, this requires additional code not pictured here.
-    // For a full example using hyper, see:
-    // https://github.com/open-telemetry/opentelemetry-rust/blob/v0.19.0/examples/aws-xray/src/server.rs#L14-L26
-    global::set_text_map_propagator(XrayPropagator::default());
 
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(opentelemetry_otlp::new_exporter().tonic())
-        .with_trace_config(
-            sdktrace::config()
-                .with_sampler(sdktrace::Sampler::AlwaysOn)
-                // Needed in order to convert the trace IDs into an Xray-compatible format
-                .with_id_generator(sdktrace::XrayIdGenerator::default()),
-        )
-        .install_simple()
-        .expect("Unable to initialize OtlpPipeline");
 
-    // Create a tracing layer with the configured tracer
-    let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-
-    // Parse an `EnvFilter` configuration from the `RUST_LOG`
-    // environment variable.
-    let filter = EnvFilter::from_default_env();
-
-    // Use the tracing subscriber `Registry`, or any other subscriber
-    // that impls `LookupSpan`
-    tracing_subscriber::registry()
-        .with(opentelemetry)
-        .with(filter)
-        .with(fmt::Layer::default())
-        .try_init()
-}

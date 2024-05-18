@@ -37,14 +37,14 @@ pub use connection::Connection;
 pub mod frame;
 pub use frame::Frame;
 
-mod db;
+pub mod db;
 use db::Db;
-use db::DbDropGuard;
 
 mod parse;
 use parse::{Parse, ParseError};
 
 pub mod server;
+pub mod request;
 
 // mod shutdown;
 // use shutdown::Shutdown;

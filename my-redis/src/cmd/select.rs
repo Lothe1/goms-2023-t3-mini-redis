@@ -1,25 +1,34 @@
+use std::sync::Arc;
 use crate::cmd::{Parse, ParseError};
 use crate::{Connection, Db, Frame};
-
 use bytes::Bytes;
 use std::time::Duration;
 use tracing::{debug, instrument};
+use crate::db::AllDbs;
 
 #[derive(Debug)]
 pub struct Select {
-    db_index: u8,
+    db_index: usize,
+}
+
+pub struct Client {
+    connection: Connection,
+    all_dbs: Arc<AllDbs>,
+    index: usize,
 }
 
 impl Select {
 
-    pub fn new(db_index: u8) -> Select {
+    pub fn new(db_index: usize) -> Select {
         Select { db_index }
     }
 
     /// Get the db index
-    pub fn db_index(&self) -> u8 {
-        self.db_index
+    pub fn db_index(&self) -> &usize {
+        &self.db_index
     }
+
+
 
     pub(crate) fn parse_frames(parse: &mut Parse) -> crate::Result<Select> {
         // Read the database index.
@@ -33,7 +42,7 @@ impl Select {
             Err(_) => {} // No further data to parse, which is expected.
         }
 
-        Ok(Select { db_index })
+        Ok(Select { db_index: db_index.into() })
     }
 
 
@@ -41,9 +50,9 @@ impl Select {
     ///
     /// The response is written to `dst`. This is called by the server in order
     /// to execute a received command.
-    #[instrument(skip(self, dst))]
-    pub(crate) async fn apply(self, dst: &mut Connection) -> crate::Result<()> {
-
+    #[instrument(skip(self, client, dst))]
+    pub(crate) async fn apply(self,  client: &mut Client, dst: &mut Connection) -> crate::Result<()> {
+        client.index = self.db_index as usize;
         // Create a success response and write it to `dst`.
         let response = Frame::Simple("OK".to_string());
         debug!(?response);
@@ -52,14 +61,5 @@ impl Select {
         Ok(())
     }
 
-    /// Converts the command into an equivalent `Frame`.
-    ///
-    /// This is called by the client when encoding a `Set` command to send to
-    /// the server.
-    pub(crate) fn into_frame(self) -> Frame {
-        let mut frame = Frame::array();
-        frame.push_bulk(Bytes::from("select".as_bytes()));
-        frame.push_bulk(Bytes::from(self.db_index.into_bytes()));
-        frame
-    }
+
 }
