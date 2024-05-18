@@ -33,7 +33,7 @@ use opentelemetry_aws::trace::XrayPropagator;
 use tracing_subscriber::{
     fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
 };
-use my_redis::Command::{Get, Select, Set};
+use my_redis::Command::{Get, Select, Set, Unknown};
 
 #[tokio::main]
 pub async fn main() -> my_redis::Result<()> {
@@ -77,19 +77,28 @@ async fn process(socket: TcpStream, all_dbs: Arc<AllDbs>, channels: Arc<Vec<Send
     };
     while let Some(frame) = client.connection.read_frame().await? {
         dbg!(&frame);
-        let cmd = my_redis::Command::from_frame(frame)?;
-        let (request, receiver) = Request::new(cmd);
-        match request.cmd {
-            Select(cmd) => {
-                client.index = *cmd.db_index();
-                client.connection.write_frame(&Frame::Simple("OK".to_string())).await?;
+        let cmd = my_redis::Command::from_frame(frame);
+        match cmd {
+            Ok(cmd) => {
+                let (request, receiver) = Request::new(cmd);
+                match request.cmd {
+                    Select(cmd) => {
+                        let db_index = *cmd.db_index();
+                        client.index = db_index;
+                        client.connection.write_frame(&Frame::Simple("OK".to_string())).await?;
+                    }
+                    _ => {
+                        channels.get(client.index).expect("REASON").send(request).await?;
+                        let frame = receiver.await?;
+                        client.connection.write_frame(&frame).await?;
+                    }
+                }
             }
-            _ => {
-                channels.get(client.index).expect("REASON").send(request).await?;
-                let frame = receiver.await?;
-                client.connection.write_frame(&frame).await?;
+            Err(e) => {
+                client.connection.write_frame(&Frame::Error(e.to_string())).await?;
             }
         }
+
     }
     Ok(())
 }
@@ -97,7 +106,6 @@ async fn process(socket: TcpStream, all_dbs: Arc<AllDbs>, channels: Arc<Vec<Send
 async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>) {
     while let Some(request) = receiver.recv().await {
         dbg!(&request);
-        // run sleep command
         let response = match request.cmd {
             Set(cmd) => {
                 all_dbs.get_instance(index).unwrap().lock().unwrap().insert(cmd.key().to_string(), cmd.value().clone());
@@ -111,6 +119,10 @@ async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>
                     Frame::Null
                 }
             }
+
+
+            Unknown(cmd) => Frame::Simple(format!("{:?}", cmd)),
+
             cmd => panic!("unimplemented {:?}", cmd),
         };
         request.sender.send(response).unwrap();

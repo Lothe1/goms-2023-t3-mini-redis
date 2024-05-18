@@ -52,35 +52,9 @@ impl Get {
         // name of the key to get. If the next value is not a string or the
         // input is fully consumed, then an error is returned.
         let key = parse.next_string()?;
-
         Ok(Get { key })
     }
 
-    /// Apply the `Get` command to the specified `Db` instance.
-    ///
-    /// The response is written to `dst`. This is called by the server in order
-    /// to execute a received command.
-    #[instrument(skip(self, db, dst))]
-    pub(crate) async fn apply(self, db: &Db, dst: &mut Connection) -> crate::Result<()> {
-        // Get the value from the shared database state
-
-        let response = {
-            let db = db.lock().unwrap();
-            let value = db.get(&self.key);
-            if let Some(value) = value {
-                Frame::Bulk(value.clone().into())
-            } else {
-                Frame::Null
-            }
-        };
-
-        debug!(?response);
-
-        // Write the response back to the client
-        dst.write_frame(&response).await?;
-
-        Ok(())
-    }
 
     /// Converts the command into an equivalent `Frame`.
     ///
