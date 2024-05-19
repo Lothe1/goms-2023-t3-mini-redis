@@ -10,8 +10,8 @@ pub use set::Set;
 // mod subscribe;
 // pub use subscribe::{Subscribe, Unsubscribe};
 
-// mod ping;
-// pub use ping::Ping;
+mod ping;
+pub use ping::Ping;
 
 mod unknown;
 mod select;
@@ -31,7 +31,7 @@ pub enum Command {
     Set(Set),
     // Subscribe(Subscribe),
     // Unsubscribe(Unsubscribe),
-    // Ping(Ping),
+    Ping(Ping),
     Select(Select),
     Unknown(Unknown),
 }
@@ -69,7 +69,7 @@ impl Command {
             "select" => Command::Select(Select::parse_frames(&mut parse)?),
             // "subscribe" => Command::Subscribe(Subscribe::parse_frames(&mut parse)?),
             // "unsubscribe" => Command::Unsubscribe(Unsubscribe::parse_frames(&mut parse)?),
-            // "ping" => Command::Ping(Ping::parse_frames(&mut parse)?),
+            "ping" => Command::Ping(Ping::parse_frames(&mut parse)?),
             _ => {
                 // The command is not recognized and an Unknown command is
                 // returned.
@@ -124,7 +124,7 @@ impl Command {
             Command::Set(_) => "set",
             // Command::Subscribe(_) => "subscribe",
             // Command::Unsubscribe(_) => "unsubscribe",
-            // Command::Ping(_) => "ping",
+            Command::Ping(_) => "ping",
             Command::Select(_) => "select",
             Command::Unknown(cmd) => cmd.get_name(),
         }

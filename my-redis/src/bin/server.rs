@@ -8,6 +8,7 @@
 
 
 use std::sync::Arc;
+use bytes::Bytes;
 use my_redis::{server, DEFAULT_PORT, Connection, Frame};
 use clap::Parser;
 use tokio::net::{TcpListener, TcpStream};
@@ -33,7 +34,7 @@ use opentelemetry_aws::trace::XrayPropagator;
 use tracing_subscriber::{
     fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
 };
-use my_redis::Command::{Get, Select, Set, Unknown};
+use my_redis::Command::{Get, Ping, Select, Set, Unknown};
 
 #[tokio::main]
 pub async fn main() -> my_redis::Result<()> {
@@ -119,6 +120,14 @@ async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>
                     Frame::Null
                 }
             }
+
+            Ping(cmd) => {
+
+                let bytes = cmd.key();
+                Frame::Bulk(bytes.clone())
+
+            }
+
 
 
             Unknown(cmd) => Frame::Simple(format!("{:?}", cmd)),
