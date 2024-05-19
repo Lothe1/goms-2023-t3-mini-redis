@@ -5,6 +5,7 @@ use bytes::Bytes;
 use std::time::Duration;
 use tracing::{debug, instrument};
 use crate::db::AllDbs;
+use crate::db::NUM_DBS;
 
 #[derive(Debug)]
 pub struct Select {
@@ -36,8 +37,8 @@ impl Select {
             .parse::<usize>()
             .map_err(|_| "Invalid database index")?;
 
-        if !(0..=12).contains(&db_index) {
-            return Err("Database index must be between 0 and 12".into());
+        if !(0..NUM_DBS).contains(&db_index) {
+            return Err("Database index must be between 0 and 15".into());
         }
 
         // Attempt to parse another string.

@@ -2,8 +2,6 @@ use crate::{Connection, Db, Frame, Parse};
 
 use bytes::Bytes;
 
-
-
 #[derive(Debug)]
 pub struct Lpush {
     key: String,
@@ -11,8 +9,7 @@ pub struct Lpush {
 }
 
 impl Lpush {
-    pub fn new(key: impl ToString, value: Bytes) -> Lpush {
-
+    pub fn new(key: impl ToString) -> Lpush {
         Lpush {
             key: key.to_string(),
             list: vec![],
@@ -30,7 +27,6 @@ impl Lpush {
     pub(crate) fn parse_frames(parse: &mut Parse) -> crate::Result<Lpush> {
         let mut values = Vec::new();
         let key = parse.next_string()?;
-
         while let Ok(value) = parse.next_string() {
             values.push(value);
         }

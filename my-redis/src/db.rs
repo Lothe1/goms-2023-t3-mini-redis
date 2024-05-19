@@ -5,7 +5,7 @@ use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap, LinkedList};
 use std::sync::{Arc, Mutex};
 use tracing::debug;
-const NUM_DBS: usize = 16;
+pub const NUM_DBS: usize = 16;
 
 #[derive(PartialEq, Debug)]
 pub enum DataTypes {

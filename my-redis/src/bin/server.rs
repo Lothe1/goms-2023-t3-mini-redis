@@ -7,6 +7,7 @@
 //! The `clap` crate is used for parsing arguments.
 
 
+use std::collections::LinkedList;
 use std::sync::Arc;
 use bytes::Bytes;
 use my_redis::{server, DEFAULT_PORT, Connection, Frame};
@@ -39,8 +40,8 @@ use opentelemetry_aws::trace::XrayPropagator;
 use tracing_subscriber::{
     fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
 };
-use my_redis::Command::{Exists, Get, Ping, Select, Set, Unknown};
-
+use my_redis::Command::{Exists, Get, Lpush,Rpush ,Ping, Select, Set, Unknown};
+use my_redis::db::NUM_DBS;
 #[tokio::main]
 pub async fn main() -> my_redis::Result<()> {
 
@@ -49,7 +50,7 @@ pub async fn main() -> my_redis::Result<()> {
     let listener = TcpListener::bind(&format!("127.0.0.1:{}", port)).await?;
     let databases = Arc::new(AllDbs::new());
     let mut senders: Vec<Sender<Request>> = vec![];
-    for database_index in 0..12 {
+    for database_index in 0..NUM_DBS {
         let (tx, rx) = mpsc::channel(32);
         let all_dbs_clone = Arc::clone(&databases);
         tokio::spawn(async move {
@@ -114,7 +115,6 @@ async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>
         dbg!(&request);
         let response = match request.cmd {
             Set(cmd) => {
-
                 all_dbs.get_instance(index).unwrap().lock().unwrap().insert(cmd.key().to_string(), DataTypes::Bytes(cmd.value().clone()));
                 Frame::Simple("OK".to_string())
             }
@@ -144,8 +144,38 @@ async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>
                 }
                 Frame::Integer(exists as u64)
             }
+            Lpush(cmd) => {
+                let key = cmd.key().to_string();
+                let values = cmd.get_lists().clone();
+                let db_instance = all_dbs.get_instance(index).unwrap();
+                let mut db_lock = db_instance.lock().unwrap();
+                let list = db_lock.entry(key).or_insert_with(|| DataTypes::List(LinkedList::new()));
 
+                if let DataTypes::List(ref mut data) = list {
+                    for value in values {
+                        data.push_front(Bytes::from(value));
+                    }
+                    Frame::Integer(data.len() as u64)
+                } else {
+                    Frame::Simple("Unexpected data type".parse().unwrap())
+                }
+            }
 
+            Rpush(cmd) => {
+                let key = cmd.key().to_string();
+                let values = cmd.get_lists().clone();
+                let db_instance = all_dbs.get_instance(index).unwrap();
+                let mut db_lock = db_instance.lock().unwrap();
+                let list = db_lock.entry(key).or_insert_with(|| DataTypes::List(LinkedList::new()));
+                if let DataTypes::List(ref mut data) = list {
+                    for value in values {
+                        data.push_back(Bytes::from(value));
+                    }
+                    Frame::Integer(data.len() as u64)
+                } else {
+                    Frame::Simple("Unexpected data type".parse().unwrap())
+                }
+            }
 
             Unknown(cmd) => Frame::Simple(format!("{:?}", cmd)),
 
