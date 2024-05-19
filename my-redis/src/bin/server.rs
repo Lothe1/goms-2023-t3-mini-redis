@@ -18,6 +18,11 @@ use tokio::sync::mpsc::{Receiver, Sender};
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
+enum ValueType {
+    String(String),
+    List(Vec<String>),
+    Unknown, // In case the data does not match expected formats
+}
 
 #[cfg(feature = "otel")]
 // To be able to set the XrayPropagator
@@ -34,7 +39,7 @@ use opentelemetry_aws::trace::XrayPropagator;
 use tracing_subscriber::{
     fmt, layer::SubscriberExt, util::SubscriberInitExt, util::TryInitError, EnvFilter,
 };
-use my_redis::Command::{Get, Ping, Select, Set, Unknown};
+use my_redis::Command::{Exists, Get, Ping, Select, Set, Unknown};
 
 #[tokio::main]
 pub async fn main() -> my_redis::Result<()> {
@@ -120,12 +125,19 @@ async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>
                     Frame::Null
                 }
             }
-
             Ping(cmd) => {
-
                 let bytes = cmd.key();
                 Frame::Bulk(bytes.clone())
-
+            }
+            Exists(cmd) => {
+                let a = cmd.get_lists();
+                let mut exists = 0;
+                for key in a {
+                    if all_dbs.get_instance(index).unwrap().lock().unwrap().contains_key(key) {
+                        exists += 1;
+                    }
+                }
+                Frame::Integer(exists as u64)
             }
 
 

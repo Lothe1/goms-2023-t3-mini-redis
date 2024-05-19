@@ -73,15 +73,10 @@ impl Set {
     /// ```
     pub(crate) fn parse_frames(parse: &mut Parse) -> crate::Result<Set> {
         use ParseError::EndOfStream;
-
         // Read the key to set. This is a required field
         let key = parse.next_string()?;
-
         // Read the value to set. This is a required field.
         let value = parse.next_bytes()?;
-
-
-
         // Attempt to parse another string.
         match parse.next_string() {
             // Currently, mini-redis does not support any of the other SET

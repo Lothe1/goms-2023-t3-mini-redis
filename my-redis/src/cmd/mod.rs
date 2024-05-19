@@ -16,9 +16,15 @@ pub use ping::Ping;
 mod unknown;
 mod select;
 
+mod exists;
+mod lpush;
+
+pub use exists::Exists;
+
 pub use unknown::Unknown;
 
 use crate::{Connection, Db, Frame, Parse, ParseError};
+use crate::cmd::lpush::Lpush;
 use crate::cmd::select::Select;
 
 /// Enumeration of supported Redis commands.
@@ -34,6 +40,8 @@ pub enum Command {
     Ping(Ping),
     Select(Select),
     Unknown(Unknown),
+    Exists(Exists),
+    Lpush(Lpush),
 }
 
 
@@ -70,6 +78,8 @@ impl Command {
             // "subscribe" => Command::Subscribe(Subscribe::parse_frames(&mut parse)?),
             // "unsubscribe" => Command::Unsubscribe(Unsubscribe::parse_frames(&mut parse)?),
             "ping" => Command::Ping(Ping::parse_frames(&mut parse)?),
+            "lpush" => Command::Lpush(Lpush::parse_frames(&mut parse)?),
+            "exists" => Command::Exists(Exists::parse_frames(&mut parse)?),
             _ => {
                 // The command is not recognized and an Unknown command is
                 // returned.
@@ -126,6 +136,8 @@ impl Command {
             // Command::Unsubscribe(_) => "unsubscribe",
             Command::Ping(_) => "ping",
             Command::Select(_) => "select",
+            Command::Exists(_) => "exists",
+            Command::Lpush(_) => "lpush",
             Command::Unknown(cmd) => cmd.get_name(),
         }
     }
