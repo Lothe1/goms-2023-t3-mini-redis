@@ -2,12 +2,20 @@ use tokio::sync::{broadcast, Notify};
 use tokio::time::{self, Duration, Instant};
 
 use bytes::Bytes;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, LinkedList};
 use std::sync::{Arc, Mutex};
 use tracing::debug;
 const NUM_DBS: usize = 16;
-pub(crate) type Db = Arc<Mutex<HashMap<String, Bytes>>>;
-#[derive(Debug)]
+
+#[derive(PartialEq, Debug)]
+pub enum DataTypes {
+    Bytes(Bytes),
+    List(LinkedList<Bytes>),
+}
+
+pub type Db = Arc<Mutex<HashMap<String, DataTypes>>>;
+
+#[derive(Debug, Clone)]
 pub struct AllDbs {
     db0: Db,
     db1: Db,
@@ -26,6 +34,7 @@ pub struct AllDbs {
     db14: Db,
     db15: Db,
 }
+
 
 impl AllDbs {
     pub fn new() -> AllDbs {
@@ -71,22 +80,7 @@ impl AllDbs {
         }
     }
 
-    pub fn get(&self, index: usize, key: &str) -> Option<Bytes> {
-        match self.get_instance(index) {
-            Some(db) => {
-                let db = db.lock().unwrap();
-                db.get(key).cloned()
-            }
-            None => None,
-        }
-    }
 
-    pub fn set(&self, index: usize, key: String, value: Bytes) {
-        if let Some(db) = self.get_instance(index) {
-            let mut db = db.lock().unwrap();
-            db.insert(key, value);
-        }
-    }
 
 }
 

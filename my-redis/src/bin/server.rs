@@ -12,7 +12,7 @@ use bytes::Bytes;
 use my_redis::{server, DEFAULT_PORT, Connection, Frame};
 use clap::Parser;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;use my_redis::db::AllDbs;
+use tokio::sync::mpsc;use my_redis::db::{AllDbs, DataTypes};
 use my_redis::request::Request;
 use tokio::sync::mpsc::{Receiver, Sender};
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -114,12 +114,17 @@ async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>
         dbg!(&request);
         let response = match request.cmd {
             Set(cmd) => {
-                all_dbs.get_instance(index).unwrap().lock().unwrap().insert(cmd.key().to_string(), cmd.value().clone());
+
+                all_dbs.get_instance(index).unwrap().lock().unwrap().insert(cmd.key().to_string(), DataTypes::Bytes(cmd.value().clone()));
                 Frame::Simple("OK".to_string())
             }
             Get(cmd) => {
                 if let Some(value) = all_dbs.get_instance(index).unwrap().lock().unwrap().get(cmd.key()) {
                     dbg!(value.clone());
+                    let value = match value {
+                        DataTypes::Bytes(value) => value.clone(),
+                        _ => panic!("Unexpected data type"),
+                    };
                     Frame::Bulk(value.clone())
                 } else {
                     Frame::Null
