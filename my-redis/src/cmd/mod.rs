@@ -19,6 +19,8 @@ mod select;
 mod exists;
 mod lpush;
 mod rpush;
+mod blpop;
+pub use blpop::Blpop;
 
 pub use exists::Exists;
 
@@ -32,7 +34,7 @@ use crate::cmd::select::Select;
 /// Enumeration of supported Redis commands.
 ///
 /// Methods called on `Command` are delegated to the command implementation.
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Command {
     Get(Get),
     // Publish(Publish),
@@ -45,6 +47,7 @@ pub enum Command {
     Exists(Exists),
     Lpush(Lpush),
     Rpush(Rpush),
+    Blpop(Blpop),
 }
 
 
@@ -84,6 +87,7 @@ impl Command {
             "lpush" => Command::Lpush(Lpush::parse_frames(&mut parse)?),
             "rpush" => Command::Rpush(Rpush::parse_frames(&mut parse)?),
             "exists" => Command::Exists(Exists::parse_frames(&mut parse)?),
+            "blpop" => Command::Blpop(Blpop::parse_frames(&mut parse)?),
             _ => {
                 // The command is not recognized and an Unknown command is
                 // returned.
@@ -143,6 +147,7 @@ impl Command {
             Command::Exists(_) => "exists",
             Command::Lpush(_) => "lpush",
             Command::Rpush(_) => "rpush",
+            Command::Blpop(_) => "blpop",
             Command::Unknown(cmd) => cmd.get_name(),
         }
     }

@@ -2,7 +2,7 @@ use crate::{Connection, Db, Frame, Parse};
 
 use bytes::Bytes;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Rpush {
     key: String,
     list: Vec<String>,

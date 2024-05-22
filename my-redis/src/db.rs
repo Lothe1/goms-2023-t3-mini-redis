@@ -3,14 +3,34 @@ use tokio::time::{self, Duration, Instant};
 
 use bytes::Bytes;
 use std::collections::{BTreeSet, HashMap, LinkedList};
+
 use std::sync::{Arc, Mutex};
 use tracing::debug;
 pub const NUM_DBS: usize = 16;
-
-#[derive(PartialEq, Debug)]
+use tokio::sync::mpsc::{Receiver, Sender};
+#[derive( Debug)]
 pub enum DataTypes {
-    Bytes(Bytes),
+    BytesInDb(Bytes),
     List(LinkedList<Bytes>),
+    SenderList(LinkedList<Sender<KeyAndValue>>),
+}
+#[derive(Debug, Clone)]
+pub struct KeyAndValue{
+    pub key: String,
+    pub value: Bytes,
+}
+
+impl Clone for DataTypes {
+    fn clone(&self) -> Self {
+        match self {
+            DataTypes::BytesInDb(bytes) => DataTypes::BytesInDb(bytes.clone()),
+            DataTypes::List(list) => DataTypes::List(list.clone()),
+            DataTypes::SenderList(senders) => {
+                let cloned_senders = senders.iter().cloned().collect();
+                DataTypes::SenderList(cloned_senders)
+            },
+        }
+    }
 }
 
 pub type Db = Arc<Mutex<HashMap<String, DataTypes>>>;

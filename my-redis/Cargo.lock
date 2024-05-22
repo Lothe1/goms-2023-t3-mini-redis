@@ -637,6 +637,7 @@ dependencies = [
  "atoi",
  "bytes",
  "clap",
+ "log",
  "opentelemetry",
  "opentelemetry-aws",
  "opentelemetry-otlp",

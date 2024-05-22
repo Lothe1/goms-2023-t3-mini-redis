@@ -2,7 +2,7 @@ use bytes::Bytes;
 use crate::Frame;
 use crate::parse::Parse;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Exists {
     list: Vec<String>,
 }

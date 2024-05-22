@@ -1,7 +1,7 @@
 use crate::{Connection, Db, Frame, Parse};
 use bytes::Bytes;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Ping {
     key: Bytes,
 }

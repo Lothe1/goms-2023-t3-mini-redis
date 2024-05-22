@@ -7,7 +7,7 @@ use tracing::{debug, instrument};
 use crate::db::AllDbs;
 use crate::db::NUM_DBS;
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Select {
     db_index: usize,
 }

@@ -3,7 +3,7 @@ use crate::{Connection, Frame};
 use tracing::{debug, instrument};
 
 /// Represents an "unknown" command. This is not a real `Redis` command.
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Unknown {
     command_name: String,
 }
