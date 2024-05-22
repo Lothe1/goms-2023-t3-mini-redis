@@ -20,6 +20,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;use my_redis::db::{AllDbs, DataTypes};
 use my_redis::request::Request;
 use tokio::sync::mpsc::{Receiver, Sender};
+use my_redis::db::SpecialSender;
 use log::debug;
 use log::Level::Debug;
 use tracing::field::debug;
@@ -32,6 +33,8 @@ use my_redis::db::KeyAndValue;
 use my_redis::Command::*;
 use my_redis::db::DataTypes::BytesInDb;
 use my_redis::db::NUM_DBS;
+use my_redis::db::SenderType::{fromBlpop, fromBrpop};
+
 #[tokio::main]
 pub async fn main() -> my_redis::Result<()> {
     let port = DEFAULT_PORT;
@@ -106,10 +109,10 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
             Frame::Simple("OK".to_string())
         }
         Get(cmd) => {
-            let Some(value) = all_dbs.get_instance(index).unwrap().lock().unwrap().get(cmd.key());
-            match value {
-                Some(DataTypes::BytesInDb(value)) => Frame::Bulk(value.clone()),
-                _ => Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+            if let Some(DataTypes::BytesInDb(value)) = all_dbs.get_instance(index).unwrap().lock().unwrap().get(cmd.key()) {
+                Frame::Bulk(value.clone())
+            } else {
+                Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
             }
         }
         Ping(cmd) => {
@@ -141,44 +144,68 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
                 DataTypes::List(ref mut data) => {
                     let mut db_instance = all_dbs.get_instance(index).unwrap();
                     let mut db_lock = db_instance.lock().unwrap();
-                    let DataTypes::List(data) = db_lock.get_mut(&key).unwrap() else { todo!() };
-                    for value in values {
-                        data.push_front(Bytes::from(value));
+                    match db_lock.get_mut(&key).unwrap() {
+                        DataTypes::List(data) => {
+                            for value in values {
+                                data.push_front(Bytes::from(value));
+                            }
+                            Frame::Integer(data.len() as u64)
+                        }
+                        _ => Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
                     }
-                    Frame::Integer(data.len() as u64)
                 },
                 DataTypes::SenderList(senders) => {
                     let mut senders = senders;
-                    while !senders.is_empty(){
+                    while !senders.is_empty() || !values.is_empty(){
                         match senders.pop_front()  {
                             None => continue,
-                            Some(sender) => {
+                            Some(special_sender) => {
+                                let sender = special_sender.sender;
                                 if sender.is_closed() {
                                     continue;
                                 }
-                                let package = KeyAndValue {
-                                    key: key.clone(),
-                                    value: Bytes::from(values.pop_front().unwrap()),
-                                };
-                                sender.send(package.clone()).await.unwrap();
-                                break;
+                                let package;
+                                match special_sender.type_sender{
+                                    fromBlpop =>{
+                                        package = KeyAndValue {
+                                            key: key.clone(),
+                                            value: Bytes::from(values.pop_front().unwrap()),
+                                        };
+                                    }
+                                    fromBrpop =>{
+                                        package = KeyAndValue {
+                                            key: key.clone(),
+                                            value: Bytes::from(values.pop_back().unwrap()),
+                                        };
+                                    }
+                                    _ => panic!("Unexpected sender type"),
+                                }
+                                tokio::spawn(async move {
+                                    sender.send(package.clone()).await.unwrap();
+                                });
                             }
                         }
                     }
                     if values.is_empty() && senders.is_empty(){
                         // If values got nothing left then empty then remove  key
-                        let db_instance = all_dbs.get_instance(index).unwrap();
-                        let mut db_lock = db_instance.lock().unwrap();
-                        let list = db_lock.remove(&key).unwrap();
-                    }else{
+                        {
+                            let db_instance = all_dbs.get_instance(index).unwrap();
+                            let mut db_lock = db_instance.lock().unwrap();
+                            let list = db_lock.remove(&key).unwrap();
+                        }
+                    }else if values.is_empty() && !senders.is_empty(){
+                        // out of value but still have senders dont touch the keys
+                    } else{
                         // If values got something left then add it to the list
-                        let mut db_instance = all_dbs.get_instance(index).unwrap();
-                        let mut db_lock = db_instance.lock().unwrap();
-                        db_lock.remove(&key).unwrap();
-                        let list = db_lock.entry(key.clone()).or_insert_with(|| DataTypes::List(LinkedList::new()));
-                        if let DataTypes::List(ref mut data) = list {
-                            for value in values {
-                                data.push_back(Bytes::from(value));
+                        {
+                            let mut db_instance = all_dbs.get_instance(index).unwrap();
+                            let mut db_lock = db_instance.lock().unwrap();
+                            db_lock.remove(&key).unwrap();
+                            let list = db_lock.entry(key.clone()).or_insert_with(|| DataTypes::List(LinkedList::new()));
+                            if let DataTypes::List(ref mut data) = list {
+                                for value in values {
+                                    data.push_front(Bytes::from(value));
+                                }
                             }
                         }
                     }
@@ -213,15 +240,24 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
                 let db_instance = all_dbs.get_instance(index).unwrap();
                 let mut db_lock = db_instance.lock().unwrap();
                 for key in keys {
-                    if let Some(DataTypes::List(ref mut data)) = db_lock.get_mut(key) {
-                        if let Some(value) = data.pop_front() {
-                            res = value;
-                            found_key = key.clone();
-                            found = true;
-                            break;
+                    match db_lock.get_mut(key){
+                        None => {
+                            //do nothing
                         }
-                    }else{
-                        Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                        Some(DataTypes::SenderList(senders))=>{
+                            //do nothing
+                        }
+                        Some(DataTypes::List(ref mut data))=> {
+                            if let Some(value) = data.pop_front() {
+                                res = value;
+                                found_key = key.clone();
+                                found = true;
+                                break;
+                            }
+                        },
+                        _ => {
+                            Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                        }
                     }
                 }
             }
@@ -236,16 +272,28 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
                         if let Some(data_type) = db_lock.get_mut(key) {
                             match data_type {
                                 DataTypes::SenderList(senders) => {
-                                    senders.push_back(tx2.clone());
+                                    let special_sender = SpecialSender {
+                                        sender: tx2.clone(),
+                                        type_sender: fromBlpop,
+                                    };
+                                    senders.push_back(special_sender);
                                 },
                                 DataTypes::List(data) => {
-                                    db_lock.insert(key.clone(), DataTypes::SenderList(LinkedList::from([tx2.clone()])));
+                                    let special_sender = SpecialSender {
+                                        sender: tx2.clone(),
+                                        type_sender: fromBlpop,
+                                    };
+                                    db_lock.insert(key.clone(), DataTypes::SenderList(LinkedList::from([special_sender])));
                                 },
                                 _ => panic!("Unexpected data type"),
                             }
                         } else {
                             let mut senders = LinkedList::new();
-                            senders.push_back(tx2.clone());
+                            let special_sender = SpecialSender {
+                                sender: tx2.clone(),
+                                type_sender: fromBlpop,
+                            };
+                            senders.push_back(special_sender);
                             db_lock.insert(key.clone(), DataTypes::SenderList(senders));
                         }
                     }

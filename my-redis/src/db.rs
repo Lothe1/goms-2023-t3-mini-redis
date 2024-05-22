@@ -12,13 +12,24 @@ use tokio::sync::mpsc::{Receiver, Sender};
 pub enum DataTypes {
     BytesInDb(Bytes),
     List(LinkedList<Bytes>),
-    SenderList(LinkedList<Sender<KeyAndValue>>),
+    SenderList(LinkedList<SpecialSender>),
 }
 #[derive(Debug, Clone)]
 pub struct KeyAndValue{
     pub key: String,
     pub value: Bytes,
 }
+#[derive(Clone, Debug)]
+pub enum SenderType {
+    fromBlpop,
+    fromBrpop,
+}
+#[derive(Debug, Clone)]
+pub struct SpecialSender{
+    pub sender: Sender<KeyAndValue>,
+    pub type_sender: SenderType,
+}
+
 
 impl Clone for DataTypes {
     fn clone(&self) -> Self {
