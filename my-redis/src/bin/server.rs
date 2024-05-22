@@ -106,15 +106,10 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
             Frame::Simple("OK".to_string())
         }
         Get(cmd) => {
-            if let Some(value) = all_dbs.get_instance(index).unwrap().lock().unwrap().get(cmd.key()) {
-                dbg!(value.clone());
-                let value = match value {
-                    DataTypes::BytesInDb(value) => value.clone(),
-                    _ => panic!("Unexpected data type"),
-                };
-                Frame::Bulk(value.clone())
-            } else {
-                Frame::Null
+            let Some(value) = all_dbs.get_instance(index).unwrap().lock().unwrap().get(cmd.key());
+            match value {
+                Some(DataTypes::BytesInDb(value)) => Frame::Bulk(value.clone()),
+                _ => Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
             }
         }
         Ping(cmd) => {
@@ -135,6 +130,7 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
             let key = cmd.key().to_string();
             let mut values = cmd.get_lists().clone();
             let mut return_number = values.len();
+            //Make copy of the list to avoid deadlock while holding the lock then match to handle commands
             let mut list_copy = {
                 let mut db_instance = all_dbs.get_instance(index).unwrap();
                 let mut db_lock = db_instance.lock().unwrap();
@@ -153,10 +149,6 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
                 },
                 DataTypes::SenderList(senders) => {
                     let mut senders = senders;
-                    let package = KeyAndValue {
-                        key: key.clone(),
-                        value: Bytes::from(values.get(0).unwrap().clone()),
-                    };
                     while !senders.is_empty(){
                         match senders.pop_front()  {
                             None => continue,
@@ -164,12 +156,16 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
                                 if sender.is_closed() {
                                     continue;
                                 }
+                                let package = KeyAndValue {
+                                    key: key.clone(),
+                                    value: Bytes::from(values.pop_front().unwrap()),
+                                };
                                 sender.send(package.clone()).await.unwrap();
                                 break;
                             }
                         }
                     }
-                    if values.is_empty(){
+                    if values.is_empty() && senders.is_empty(){
                         // If values got nothing left then empty then remove  key
                         let db_instance = all_dbs.get_instance(index).unwrap();
                         let mut db_lock = db_instance.lock().unwrap();
@@ -188,7 +184,7 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
                     }
                     Frame::Integer(return_number as u64)
                 },
-                _ => Frame::Simple("Unexpected data type".to_string()),
+                _ => Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
             }
         }
         Rpush(cmd) => {
@@ -224,6 +220,8 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
                             found = true;
                             break;
                         }
+                    }else{
+                        Frame::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
                     }
                 }
             }

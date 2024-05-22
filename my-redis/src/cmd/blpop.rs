@@ -30,7 +30,7 @@ impl Blpop {
         while let Ok(value) = parse.next_string() {
             values.push(value);
         }
-        let time_out:f64 = values.pop().unwrap().parse().expect("Invalid timeout");
+        let time_out:f64 = values.pop().unwrap().parse().expect("ERR timeout is not a float or out of range");
         Ok(Blpop { list: values, timeout:time_out })
     }
 }
