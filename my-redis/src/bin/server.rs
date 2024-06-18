@@ -46,7 +46,7 @@ pub async fn main() -> my_redis::Result<()> {
         let (tx, rx) = mpsc::channel(32);
         let all_dbs_clone = Arc::clone(&databases);
         tokio::spawn(async move {
-            run(rx, database_index as usize, all_dbs_clone).await;
+            initialize_server(rx, database_index as usize, all_dbs_clone).await;
         });
         senders.push(tx);
     }
@@ -57,7 +57,7 @@ pub async fn main() -> my_redis::Result<()> {
         let all_dbs_clone = databases.clone();
         let sender_arc_clone = sender_arc.clone();
         tokio::spawn(async move{
-            if let Err(e) = process(socket, all_dbs_clone, sender_arc_clone).await {
+            if let Err(e) = process_incoming_frame(socket, all_dbs_clone, sender_arc_clone).await {
                 eprintln!("An error occurred: {}", e);
             }
         });
@@ -68,7 +68,7 @@ struct Client {
     all_dbs: Arc<AllDbs>,
     index: usize,
 }
-async fn process(socket: TcpStream, all_dbs: Arc<AllDbs>, channels: Arc<Vec<Sender<Request>>>) -> Result<()>{
+async fn process_incoming_frame(socket: TcpStream, all_dbs: Arc<AllDbs>, channels: Arc<Vec<Sender<Request>>>) -> Result<()>{
     let mut client = Client {
         connection: Connection::new(socket),
         all_dbs,
@@ -102,7 +102,7 @@ async fn process(socket: TcpStream, all_dbs: Arc<AllDbs>, channels: Arc<Vec<Send
     Ok(())
 }
 
-async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
+async fn process_commands_for_index_namespace(request: Request, index: usize, all_dbs: Arc<AllDbs>){
     let response = match request.cmd {
         Set(cmd) => {
             all_dbs.get_instance(index).unwrap().lock().unwrap().insert(cmd.key().to_string(), DataTypes::BytesInDb(cmd.value().clone()));
@@ -473,12 +473,12 @@ async fn processcommands(request: Request, index: usize, all_dbs: Arc<AllDbs>){
     request.sender.send(response).unwrap();
 }
 
-async fn run(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>) {
+async fn initialize_server(mut receiver: Receiver<Request>, index: usize, all_dbs: Arc<AllDbs>) {
     while let Some(request) = receiver.recv().await{
         // dbg!(&request);
         let adbs = all_dbs.clone();
         tokio::task::spawn(async move {
-            processcommands(request, index, adbs).await;
+            process_commands_for_index_namespace(request, index, adbs).await;
         });
     }
 
